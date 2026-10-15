@@ -44,10 +44,11 @@ ART_MAX_BYTES = 5 * 1024 * 1024
 ART_DOWNLOAD_CHUNK_BYTES = 64 * 1024
 ART_PREFERRED_WIDTH_PX = 300
 ART_CACHE_MAX_ENTRIES = 1
-NOTIFICATION_APP_NAME = "Spotify"
+NOTIFICATION_APP_NAME = "Suzumushi"
 NOTIFICATION_ICON = "spotify"
-NOTIFICATION_TITLE = "Suzumushi"
-NOTIFICATION_BODY_SEPARATOR = " - "
+NOTIFICATION_HEADER_TEMPLATE = "{artists} · {album} ({year})"
+NOTIFICATION_BODY_TEMPLATE = "<b>{title}</b>"
+UNKNOWN_YEAR = "Unknown year"
 UNKNOWN_TITLE = "Unknown Title"
 UNKNOWN_ARTIST = "Unknown Artist"
 UNKNOWN_ALBUM = "Unknown Album"
@@ -87,6 +88,7 @@ class Playback:
     title: str = UNKNOWN_TITLE
     artists: str = UNKNOWN_ARTIST
     album: str = UNKNOWN_ALBUM
+    release_year: str = UNKNOWN_YEAR
     cover_url: str | None = None
     duration_ms: int | None = None
     progress_ms: int | None = None
@@ -302,6 +304,12 @@ def normalize_playback(payload: Any, received_at_monotonic: float | None = None)
                if isinstance(a, Mapping) and isinstance(a.get("name"), str) and a.get("name", "").strip()]
     album_obj = item.get("album")
     album = album_obj.get("name", "").strip() if isinstance(album_obj, Mapping) and isinstance(album_obj.get("name", ""), str) else ""
+    release_date = album_obj.get("release_date") if isinstance(album_obj, Mapping) else None
+    release_year = UNKNOWN_YEAR
+    if isinstance(release_date, str):
+        year = release_date.split("-", 1)[0]
+        if len(year) == 4 and year.isascii() and year.isdigit() and int(year) > 0:
+            release_year = year
     title = item.get("name", "").strip() if isinstance(item.get("name", ""), str) else ""
     duration = item.get("duration_ms")
     progress = payload.get("progress_ms")
@@ -324,6 +332,7 @@ def normalize_playback(payload: Any, received_at_monotonic: float | None = None)
         title=title or UNKNOWN_TITLE,
         artists=", ".join(artists) or UNKNOWN_ARTIST,
         album=album or UNKNOWN_ALBUM,
+        release_year=release_year,
         cover_url=cover_url,
         duration_ms=duration if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else None,
         progress_ms=progress if isinstance(progress, int) and not isinstance(progress, bool) and progress >= 0 else None,
@@ -423,13 +432,20 @@ def download_artwork(url: str | None, config: Config, session: Any,
 
 def dispatch_notification(playback: Playback, config: Config, session: Any,
                           cache_state: OrderedDict[str, str]) -> None:
-    icon = download_artwork(playback.cover_url, config, session, cache_state) or NOTIFICATION_ICON
-    body = NOTIFICATION_BODY_SEPARATOR.join((playback.title, playback.artists, playback.album))
-    # notify-send accepts markup; escape untrusted Spotify metadata first.
-    summary = html.escape(NOTIFICATION_TITLE, quote=True)
-    safe_body = html.escape(body, quote=True)
+    artwork = download_artwork(playback.cover_url, config, session, cache_state)
+    # Keep intentional formatting while escaping untrusted Spotify metadata.
+    summary = NOTIFICATION_HEADER_TEMPLATE.format(
+        artists=html.escape(playback.artists, quote=True),
+        year=html.escape(playback.release_year, quote=True),
+        album=html.escape(playback.album, quote=True),
+    )
+    safe_body = NOTIFICATION_BODY_TEMPLATE.format(title=html.escape(playback.title, quote=True))
+    command = ["notify-send", "--app-name", NOTIFICATION_APP_NAME, "--icon", NOTIFICATION_ICON]
+    if artwork:
+        command.extend(["--hint", f"string:image-path:{Path(artwork).resolve().as_uri()}"])
+    command.extend([summary, safe_body])
     subprocess.run(
-        ["notify-send", "--app-name", NOTIFICATION_APP_NAME, "--icon", icon, summary, safe_body],
+        command,
         check=True, timeout=NOTIFY_TIMEOUT_SECONDS, capture_output=True, text=True,
     )
 

@@ -142,10 +142,36 @@ class SuzumushiTests(unittest.TestCase):
                 app.dispatch_notification(playback, config, object(), OrderedDict())
         args, kwargs = run.call_args
         self.assertFalse(kwargs.get("shell", False))
-        self.assertEqual(args[0][-2], "Suzumushi")
-        self.assertEqual(args[0][-1], '&quot;$(touch nope) &amp; &lt;title&gt; - Artist - Album')
+        self.assertEqual(args[0][args[0].index("--app-name") + 1], "Suzumushi")
+        self.assertEqual(args[0][-2], 'Artist · Album (Unknown year)')
+        self.assertEqual(args[0][-1], '<b>&quot;$(touch nope) &amp; &lt;title&gt;</b>')
         self.assertTrue(kwargs["check"])
         self.assertEqual(kwargs["timeout"], app.NOTIFY_TIMEOUT_SECONDS)
+
+    def test_release_year_accepts_spotify_date_precisions_and_missing_metadata(self):
+        for release_date, expected in [("2011", "2011"), ("2011-03", "2011"),
+                                       ("2011-03-15", "2011"), (None, app.UNKNOWN_YEAR),
+                                       ("bad", app.UNKNOWN_YEAR), (2011, app.UNKNOWN_YEAR)]:
+            with self.subTest(release_date=release_date):
+                data = payload()
+                data["item"]["album"]["release_date"] = release_date
+                self.assertEqual(app.normalize_playback(data).release_year, expected)
+
+    def test_album_art_uses_image_hint_and_keeps_application_icon(self):
+        playback = app.normalize_playback(payload())
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = app.Config("id", "secret", app.DEFAULT_REDIRECT_URI, Path(temp_dir),
+                                Path(temp_dir) / "token.json", Path(temp_dir) / "cover")
+            for artwork in (str(Path(temp_dir) / "cover image.png"), None):
+                with self.subTest(artwork=artwork), patch.object(app, "download_artwork", return_value=artwork), patch.object(app.subprocess, "run") as run:
+                    app.dispatch_notification(playback, config, object(), OrderedDict())
+                    command = run.call_args.args[0]
+                    self.assertEqual(command[command.index("--icon") + 1], app.NOTIFICATION_ICON)
+                    if artwork:
+                        self.assertEqual(command[command.index("--hint") + 1],
+                                         f"string:image-path:{Path(artwork).as_uri()}")
+                    else:
+                        self.assertNotIn("--hint", command)
 
     def test_failed_notification_retries_track_only_if_still_current(self):
         with tempfile.TemporaryDirectory() as temp_dir:
