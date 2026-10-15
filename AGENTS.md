@@ -117,3 +117,5 @@ Run local tests after installing `requirements.txt`; the tests use Python's stan
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+`.github/workflows/tests.yml` runs this suite on Ubuntu with Python 3.12 after every push to `main`. It installs dependencies from `requirements.txt`; tests use mocks and require no Spotify credentials or desktop session. The README badge tracks this workflow on `main`.

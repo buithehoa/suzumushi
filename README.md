@@ -1,5 +1,7 @@
 # suzumushi
 
+[![Tests](https://github.com/buithehoa/suzumushi/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/buithehoa/suzumushi/actions/workflows/tests.yml)
+
 Suzumushi shows desktop notifications for Spotify music playing on any of your account's devices. It runs in the background as a systemd user service.
 
 ## Installation
