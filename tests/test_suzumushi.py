@@ -163,15 +163,30 @@ class SuzumushiTests(unittest.TestCase):
             config = app.Config("id", "secret", app.DEFAULT_REDIRECT_URI, Path(temp_dir),
                                 Path(temp_dir) / "token.json", Path(temp_dir) / "cover")
             for artwork in (str(Path(temp_dir) / "cover image.png"), None):
-                with self.subTest(artwork=artwork), patch.object(app, "download_artwork", return_value=artwork), patch.object(app.subprocess, "run") as run:
+                with self.subTest(artwork=artwork), patch.object(app, "download_artwork", return_value=artwork), patch.object(app, "resolve_notification_icon", return_value="/icons/spotify.png"), patch.object(app.subprocess, "run") as run:
                     app.dispatch_notification(playback, config, object(), OrderedDict())
                     command = run.call_args.args[0]
-                    self.assertEqual(command[command.index("--icon") + 1], app.NOTIFICATION_ICON)
+                    self.assertEqual(command[command.index("--icon") + 1], "/icons/spotify.png")
                     if artwork:
                         self.assertEqual(command[command.index("--hint") + 1],
                                          f"string:image-path:{Path(artwork).as_uri()}")
                     else:
                         self.assertNotIn("--hint", command)
+
+    def test_application_icon_resolves_from_another_installed_theme(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            icon = Path(temp_dir) / "other-theme/apps/240/spotify.png"
+            icon.parent.mkdir(parents=True)
+            icon.touch()
+            with patch.object(app, "NOTIFICATION_ICON", "spotify"), patch.object(app, "NOTIFICATION_ICON_SEARCH_DIRS", (temp_dir,)):
+                self.assertEqual(app.resolve_notification_icon(), str(icon))
+            with patch.object(app, "NOTIFICATION_ICON", str(icon)):
+                self.assertEqual(app.resolve_notification_icon(), str(icon))
+
+    def test_missing_application_icon_retains_theme_name_fallback(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(app, "NOTIFICATION_ICON", "spotify"), patch.object(app, "NOTIFICATION_ICON_SEARCH_DIRS", (temp_dir,)):
+                self.assertEqual(app.resolve_notification_icon(), "spotify")
 
     def test_failed_notification_retries_track_only_if_still_current(self):
         with tempfile.TemporaryDirectory() as temp_dir:

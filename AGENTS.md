@@ -48,7 +48,7 @@ Read the year from the album's release date, including year-only and month-preci
 
 Pass `notify-send` arguments as a list with no shell, a checked exit status, and a subprocess timeout. `NOTIFY_TIMEOUT_SECONDS` limits command execution, not banner visibility. Desktop settings and extensions control visible duration. Successful submission does not prove a visible banner.
 
-Send artwork through the `image-path` hint using a file URI, separately from the `spotify` application icon. Passing album art as `--icon` puts it in the small app-icon slot on GNOME. If the theme cannot resolve `spotify`, the app icon may be generic; artwork remains a separate content image.
+Send artwork through the `image-path` hint using a file URI, separately from the Spotify application icon. Passing album art as `--icon` puts it in the small app-icon slot on GNOME. Resolve the configured application icon to an installed image file across the configured user/system icon directories, including other themes, before passing it as `--icon`. If no file is found, retain the theme-name fallback. An explicit existing icon path takes precedence.
 
 Download artwork only when needed, with finite timeouts, a 5 MiB size cap, image signature validation, private permissions, and atomic cache writes. Keep a bounded cache and reuse matching covers. Failed or missing art uses the application icon without stale artwork from another album.
 
@@ -71,6 +71,7 @@ Change constants at the top of `suzumushi.py`. Changes take effect after copying
 | `ART_MAX_BYTES` / `ART_DOWNLOAD_CHUNK_BYTES` | 5 MiB / 64 KiB | Artwork size bound and read chunk |
 | `ART_PREFERRED_WIDTH_PX` / `ART_CACHE_MAX_ENTRIES` | 300 / 1 | Preferred cover width and cache bound |
 | `NOTIFICATION_APP_NAME` / `NOTIFICATION_ICON` | `Suzumushi` / `spotify` | Notification identity and fallback icon |
+| `NOTIFICATION_ICON_SEARCH_DIRS` / `NOTIFICATION_ICON_EXTENSIONS` | User/system icon directories / PNG, SVG, XPM | Resolve installed application icon files independently of the active theme |
 | `NOTIFICATION_HEADER_TEMPLATE` | `{artists} · {album} ({year})` | Notification heading layout |
 | `NOTIFICATION_BODY_TEMPLATE` | `<b>{title}</b>` | Bold track title in the notification body |
 | `UNKNOWN_YEAR` | `Unknown year` | Missing album release year |

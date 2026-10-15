@@ -46,6 +46,11 @@ ART_PREFERRED_WIDTH_PX = 300
 ART_CACHE_MAX_ENTRIES = 1
 NOTIFICATION_APP_NAME = "Suzumushi"
 NOTIFICATION_ICON = "spotify"
+NOTIFICATION_ICON_SEARCH_DIRS = (
+    "~/.local/share/icons", "~/.icons", "/usr/local/share/icons",
+    "/usr/share/icons", "/usr/share/pixmaps",
+)
+NOTIFICATION_ICON_EXTENSIONS = ("png", "svg", "xpm")
 NOTIFICATION_HEADER_TEMPLATE = "{artists} · {album} ({year})"
 NOTIFICATION_BODY_TEMPLATE = "<b>{title}</b>"
 UNKNOWN_YEAR = "Unknown year"
@@ -430,6 +435,23 @@ def download_artwork(url: str | None, config: Config, session: Any,
                 pass
 
 
+def resolve_notification_icon() -> str:
+    configured_path = Path(NOTIFICATION_ICON).expanduser()
+    if configured_path.is_file():
+        return str(configured_path.resolve())
+    if configured_path.is_absolute():
+        return NOTIFICATION_ICON
+    for directory in NOTIFICATION_ICON_SEARCH_DIRS:
+        root = Path(directory).expanduser()
+        if not root.is_dir():
+            continue
+        for extension in NOTIFICATION_ICON_EXTENSIONS:
+            for candidate in sorted(root.rglob(f"{NOTIFICATION_ICON}.{extension}")):
+                if candidate.is_file():
+                    return str(candidate.resolve())
+    return NOTIFICATION_ICON
+
+
 def dispatch_notification(playback: Playback, config: Config, session: Any,
                           cache_state: OrderedDict[str, str]) -> None:
     artwork = download_artwork(playback.cover_url, config, session, cache_state)
@@ -440,7 +462,7 @@ def dispatch_notification(playback: Playback, config: Config, session: Any,
         album=html.escape(playback.album, quote=True),
     )
     safe_body = NOTIFICATION_BODY_TEMPLATE.format(title=html.escape(playback.title, quote=True))
-    command = ["notify-send", "--app-name", NOTIFICATION_APP_NAME, "--icon", NOTIFICATION_ICON]
+    command = ["notify-send", "--app-name", NOTIFICATION_APP_NAME, "--icon", resolve_notification_icon()]
     if artwork:
         command.extend(["--hint", f"string:image-path:{Path(artwork).resolve().as_uri()}"])
     command.extend([summary, safe_body])
