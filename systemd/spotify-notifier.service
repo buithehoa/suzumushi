@@ -1,0 +1,16 @@
+[Unit]
+Description=Suzumushi Spotify desktop notifier
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/suzumushi/.venv/bin/python %h/.local/share/suzumushi/suzumushi.py
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2 3
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+
+[Install]
+WantedBy=default.target
