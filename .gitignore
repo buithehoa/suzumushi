@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Suzumushi local authorization cache
+token.json
+spotify_notifier*.json
