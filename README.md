@@ -92,9 +92,9 @@ The installed copy is independent of the checkout. After editing Python settings
 
 The daemon polls immediately at startup. It compares stable Spotify track IDs, then URIs, then a title/artist/album/duration identity for local music without an ID or URI. It notifies only after a successful `notify-send` submission and remembers the last successfully submitted track across pauses, empty responses, and API errors for the life of the process. A process restart clears that memory and intentionally causes a startup notification for a currently playing song.
 
-When music is playing, the next poll is scheduled for the estimated end of that track. Processing time for artwork and notification is subtracted from the wait, and a one-second minimum prevents a busy loop. There are no intermediate polls during the song. When playback is idle, paused, unsupported, or has no playable item, the daemon waits 300 seconds. Invalid track timing also uses the 300-second fallback. API errors use the retry schedule described below and are not treated as idle playback.
+When music is playing, the next poll is scheduled for the estimated end of that track. Processing time for artwork and notification is subtracted from the wait, and a one-second minimum prevents a busy loop. There are no intermediate polls during the song. When playback is idle, paused, unsupported, or has no playable item, the daemon waits 120 seconds. Invalid track timing also uses the 120-second fallback. API errors use the retry schedule described below and are not treated as idle playback.
 
-Only playback observed by a poll can be reported. Idle detection can take nearly five minutes. A skip, pause, seek, or device transfer is noticed at the next scheduled poll; a track that begins and ends between polls can be missed. If notification dispatch for A fails, A is retried only if it is still playing at the next scheduled poll. When another track is playing, the daemon handles the current track and does not queue a stale notification for A.
+Only playback observed by a poll can be reported. Idle detection can take nearly two minutes. A skip, pause, seek, or device transfer is noticed at the next scheduled poll; a track that begins and ends between polls can be missed. If notification dispatch for A fails, A is retried only if it is still playing at the next scheduled poll. When another track is playing, the daemon handles the current track and does not queue a stale notification for A.
 
 Artwork downloads have a four-second timeout and a 5 MiB cap, are checked for an image signature, and are stored atomically in the private cache. Failed or missing artwork falls back to the Spotify icon. Notification arguments are passed directly to `notify-send` without a shell. A successful command submission does not guarantee that GNOME displays a banner; desktop notification settings may suppress it.
 
@@ -106,12 +106,12 @@ Change constants at the top of `suzumushi.py`. Changes take effect after copying
 
 | Constant | Default | Purpose |
 | --- | ---: | --- |
-| `IDLE_POLL_SECONDS` | 300 | Wait after idle, paused, or unsupported playback |
+| `IDLE_POLL_SECONDS` | 120 | Wait after idle, paused, or unsupported playback |
 | `MIN_POLL_SECONDS` | 1 | Minimum active wait |
-| `INVALID_TIMING_POLL_SECONDS` | 300 | Fallback for invalid active track timing |
-| `MALFORMED_RESPONSE_RETRY_SECONDS` | 300 | Retry after malformed successful response |
-| `RETRY_INITIAL_SECONDS` / `RETRY_MULTIPLIER` / `RETRY_MAX_SECONDS` | 5 / 2 / 300 | Exponential transient failure schedule |
-| `RATE_LIMIT_FALLBACK_SECONDS` | 300 | Retry-After fallback for HTTP 429 |
+| `INVALID_TIMING_POLL_SECONDS` | 120 | Fallback for invalid active track timing |
+| `MALFORMED_RESPONSE_RETRY_SECONDS` | 120 | Retry after malformed successful response |
+| `RETRY_INITIAL_SECONDS` / `RETRY_MULTIPLIER` / `RETRY_MAX_SECONDS` | 5 / 2 / 120 | Exponential transient failure schedule |
+| `RATE_LIMIT_FALLBACK_SECONDS` | 120 | Retry-After fallback for HTTP 429 |
 | `AUTH_REFRESH_ATTEMPTS` | 1 | Refresh attempts after an authorization rejection |
 | `API_TIMEOUT_SECONDS` / `AUTH_TIMEOUT_SECONDS` | 10 / 10 | Spotify API and OAuth request timeouts |
 | `ART_TIMEOUT_SECONDS` / `NOTIFY_TIMEOUT_SECONDS` | 4 / 5 | Artwork and notification timeouts |
@@ -136,9 +136,9 @@ The service's Python path, `RestartSec`, restart policy, environment, and `UMask
 - Missing credentials or `notify-send` produce a clear error and a permanent exit status.
 - Missing, unusable, revoked, or persistently rejected authorization exits with instructions to run `--auth`; service mode never launches a browser or requests terminal input.
 - HTTP 401 gets one token refresh attempt; persistent 401 and HTTP 403 stop the service with an authorization error.
-- HTTP 429 waits for the server's `Retry-After` value, or 300 seconds when it is absent or invalid.
-- Network failures and HTTP 5xx use 5, 10, 20, 40, 80, 160, then at most 300 seconds. A successful playback request resets this schedule.
-- Malformed successful responses retry after 300 seconds. Artwork and notification failures are logged and do not discard the last successful notification identity.
+- HTTP 429 waits for the server's `Retry-After` value, or 120 seconds when it is absent or invalid.
+- Network failures and HTTP 5xx use 5, 10, 20, 40, 80, then at most 120 seconds. A successful playback request resets this schedule.
+- Malformed successful responses retry after 120 seconds. Artwork and notification failures are logged and do not discard the last successful notification identity.
 - For missing desktop banners, inspect the service journal, check the session D-Bus and display environment, and review GNOME notification settings.
 
 Run local tests after installing `requirements.txt`; the tests use Python's standard library test runner:
