@@ -4,7 +4,7 @@
 
 Suzumushi shows desktop notifications for Spotify music playing on any of your account's devices. It runs in the background as a systemd user service.
 
-![Suzumushi notification showing album artwork, artist, album, release year, and a bold track title](docs/images/notification.png)
+<img src="docs/images/notification.png" alt="Suzumushi notification showing album artwork, artist, album, release year, and a bold track title" width="475" height="126">
 
 ## Installation
 
