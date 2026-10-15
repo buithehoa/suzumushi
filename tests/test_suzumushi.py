@@ -142,8 +142,8 @@ class SuzumushiTests(unittest.TestCase):
                 app.dispatch_notification(playback, config, object(), OrderedDict())
         args, kwargs = run.call_args
         self.assertFalse(kwargs.get("shell", False))
-        self.assertEqual(args[0][-2], app.html.escape(playback.title, quote=True))
-        self.assertEqual(args[0][-1], "Artist — Album")
+        self.assertEqual(args[0][-2], "Suzumushi")
+        self.assertEqual(args[0][-1], '&quot;$(touch nope) &amp; &lt;title&gt; - Artist - Album')
         self.assertTrue(kwargs["check"])
         self.assertEqual(kwargs["timeout"], app.NOTIFY_TIMEOUT_SECONDS)
 

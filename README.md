@@ -98,6 +98,8 @@ Only playback observed by a poll can be reported. Idle detection can take nearly
 
 Artwork downloads have a four-second timeout and a 5 MiB cap, are checked for an image signature, and are stored atomically in the private cache. Failed or missing artwork falls back to the Spotify icon. Notification arguments are passed directly to `notify-send` without a shell. A successful command submission does not guarantee that GNOME displays a banner; desktop notification settings may suppress it.
 
+Notifications use `Suzumushi` as the title and `Track - Artist - Album` as the body, alongside available album artwork.
+
 ## Configuration constants
 
 Change constants at the top of `suzumushi.py`. Changes take effect after copying the updated file into the install directory and restarting the service. All time constants are seconds unless noted; byte limits and image widths are explicit in their names.
@@ -117,6 +119,7 @@ Change constants at the top of `suzumushi.py`. Changes take effect after copying
 | `ART_MAX_BYTES` / `ART_DOWNLOAD_CHUNK_BYTES` | 5 MiB / 64 KiB | Artwork size bound and read chunk |
 | `ART_PREFERRED_WIDTH_PX` / `ART_CACHE_MAX_ENTRIES` | 300 / 1 | Preferred cover width and cache bound |
 | `NOTIFICATION_APP_NAME` / `NOTIFICATION_ICON` | `Spotify` / `spotify` | Notification identity and fallback icon |
+| `NOTIFICATION_TITLE` / `NOTIFICATION_BODY_SEPARATOR` | `Suzumushi` / ` - ` | Notification title and separator between track, artist, and album |
 | `UNKNOWN_TITLE` / `UNKNOWN_ARTIST` / `UNKNOWN_ALBUM` | Display fallback text | Missing metadata labels |
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / timestamped | Journald logging |
 | `OAUTH_SCOPE` | `user-read-playback-state` | Spotify permission requested |

@@ -46,6 +46,8 @@ ART_PREFERRED_WIDTH_PX = 300
 ART_CACHE_MAX_ENTRIES = 1
 NOTIFICATION_APP_NAME = "Spotify"
 NOTIFICATION_ICON = "spotify"
+NOTIFICATION_TITLE = "Suzumushi"
+NOTIFICATION_BODY_SEPARATOR = " - "
 UNKNOWN_TITLE = "Unknown Title"
 UNKNOWN_ARTIST = "Unknown Artist"
 UNKNOWN_ALBUM = "Unknown Album"
@@ -422,9 +424,9 @@ def download_artwork(url: str | None, config: Config, session: Any,
 def dispatch_notification(playback: Playback, config: Config, session: Any,
                           cache_state: OrderedDict[str, str]) -> None:
     icon = download_artwork(playback.cover_url, config, session, cache_state) or NOTIFICATION_ICON
-    body = f"{playback.artists} — {playback.album}"
+    body = NOTIFICATION_BODY_SEPARATOR.join((playback.title, playback.artists, playback.album))
     # notify-send accepts markup; escape untrusted Spotify metadata first.
-    summary = html.escape(playback.title, quote=True)
+    summary = html.escape(NOTIFICATION_TITLE, quote=True)
     safe_body = html.escape(body, quote=True)
     subprocess.run(
         ["notify-send", "--app-name", NOTIFICATION_APP_NAME, "--icon", icon, summary, safe_body],
