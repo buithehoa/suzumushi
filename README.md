@@ -1,36 +1,22 @@
 # suzumushi
 
-Suzumushi watches Spotify playback across the account's devices and submits a GNOME desktop notification when the observed music track changes. It runs as a `systemd --user` service. It does not notify for podcasts, advertisements, paused playback, or unsupported items.
+Suzumushi shows desktop notifications for Spotify music playing on any of your account's devices. It runs in the background as a systemd user service.
 
-## Requirements
+## Installation
 
-- Python 3.10 or newer and `python3-venv`
-- `notify-send`: install `libnotify-bin` on Debian/Ubuntu or `libnotify` on Arch
-- A Spotify Developer app with `http://127.0.0.1:8888/callback` registered as a Redirect URI
+Run the commands below from the repository root in your desktop terminal.
 
-The runtime dependencies are pinned in `requirements.txt`: Spotipy 2.26.0 and Requests 2.34.2.
+### 1. Install prerequisites and the script
 
-## Credentials and authentication
+Requirements: Python 3.10 or newer, Python virtual environment support, `notify-send`, and a Spotify Developer app.
 
-Set these process environment variables. The redirect URI must exactly match one registered in the Spotify Developer Dashboard; the default shown below is recommended.
+On Ubuntu/Debian:
 
 ```bash
-export SPOTIPY_CLIENT_ID='your-client-id'
-export SPOTIPY_CLIENT_SECRET='your-client-secret'
-export SPOTIPY_REDIRECT_URI='http://127.0.0.1:8888/callback'
+sudo apt install python3-venv libnotify-bin
 ```
 
-Run the explicit interactive authorization once as the desktop user:
-
-```bash
-~/.local/share/suzumushi/.venv/bin/python ~/.local/share/suzumushi/suzumushi.py --auth
-```
-
-Open the printed URL, approve access, then paste the redirected URL into the terminal. The callback path does not need a local listener because authorization uses the manual paste flow. Suzumushi checks the redirect URI and OAuth state before saving the token. The token is stored at `$XDG_CACHE_HOME/suzumushi/token.json`, or `~/.cache/suzumushi/token.json` when `XDG_CACHE_HOME` is unset. The directory and file use user-only permissions. Credentials and tokens must not be committed to this repository.
-
-## Install the runtime
-
-From the repository root:
+On Arch Linux, install `python` and `libnotify` instead.
 
 ```bash
 mkdir -p ~/.local/share/suzumushi
@@ -39,114 +25,79 @@ python3 -m venv ~/.local/share/suzumushi/.venv
 install -m 0755 suzumushi.py ~/.local/share/suzumushi/suzumushi.py
 ```
 
-Export the credentials in the desktop session, then complete the `--auth` step above. Shell exports do not automatically reach a systemd user service. Import credential and graphical-session variables into the user manager and restart the service after changing them:
+### 2. Configure Spotify credentials
+
+Register `http://127.0.0.1:8888/callback` as a redirect URI in your Spotify Developer app.
+
+Create a private environment file and edit it with your client ID and secret:
 
 ```bash
-systemctl --user import-environment \
-  SPOTIPY_CLIENT_ID SPOTIPY_CLIENT_SECRET SPOTIPY_REDIRECT_URI \
-  DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR XDG_CACHE_HOME
+install -d -m 0700 ~/.config/suzumushi
+install -m 0600 .env.example ~/.config/suzumushi/environment
+nano ~/.config/suzumushi/environment
 ```
 
-Imports live in the user manager's environment and need to be restored if that manager restarts. For persistent provisioning, put the three Spotify variables in a private file such as `~/.config/suzumushi/environment` with mode `0600`, then add this under `[Service]` in a systemd drop-in:
+The file should contain:
 
-```ini
-EnvironmentFile=%h/.config/suzumushi/environment
+```bash
+SPOTIPY_CLIENT_ID='your-client-id'
+SPOTIPY_CLIENT_SECRET='your-client-secret'
+SPOTIPY_REDIRECT_URI='http://127.0.0.1:8888/callback'
 ```
 
-The repository's `.env.example` lists variable names only. Suzumushi does not load `.env` files.
+Keep this file private. The script reads environment variables; systemd will load this file using the configuration below.
 
-## Install and manage the service
+### 3. Authorize your Spotify account
 
-Copy the provided unit and start it:
+```bash
+set -a
+source ~/.config/suzumushi/environment
+set +a
+~/.local/share/suzumushi/.venv/bin/python ~/.local/share/suzumushi/suzumushi.py --auth
+```
+
+Open the printed URL and approve access. Copy the entire redirected URL from your browser's address bar and paste it into the terminal. A connection error on the callback page is expected. Authorization is saved for future runs; repeat this step if access is revoked.
+
+### 4. Enable the background service
 
 ```bash
 mkdir -p ~/.config/systemd/user
 install -m 0644 systemd/spotify-notifier.service ~/.config/systemd/user/spotify-notifier.service
-systemctl --user daemon-reload
+mkdir -p ~/.config/systemd/user/spotify-notifier.service.d
+cat > ~/.config/systemd/user/spotify-notifier.service.d/environment.conf <<'EOF'
+[Service]
+EnvironmentFile=%h/.config/suzumushi/environment
+EOF
 systemctl --user import-environment \
-  SPOTIPY_CLIENT_ID SPOTIPY_CLIENT_SECRET SPOTIPY_REDIRECT_URI \
   DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR XDG_CACHE_HOME
+systemctl --user daemon-reload
 systemctl --user enable --now spotify-notifier.service
 ```
 
-The unit starts with the user manager, orders itself after `graphical-session.target` when available, and stops with that target. `WantedBy=default.target` supports login startup. Check that your desktop exposes the target with `systemctl --user status graphical-session.target`; if it does not, remove `PartOf=graphical-session.target` from the installed unit and use the desktop's documented session target. The service relies on the user manager receiving the active session's D-Bus and display environment for `notify-send` to reach the desktop.
+The service starts automatically at login. Run it as your desktop user, without `sudo`.
+
+## How it runs
+
+- Checks immediately at startup and notifies if music is playing.
+- Displays album art, `Artist · Album (Year)` as the heading, and the track title in bold beneath it.
+- Waits for the current song's remaining duration before checking again. Skips and pauses are detected at that next check; tracks played entirely between checks can be missed.
+- Waits two minutes when playback is paused or idle, or the content is unsupported. Podcasts and advertisements do not produce notifications.
+- Avoids repeat notifications for the same track during a run. Restarting the service allows a fresh notification for the current track.
+
+Banner appearance and display duration are controlled by your desktop's notification settings.
+
+Check status and follow logs:
 
 ```bash
 systemctl --user status spotify-notifier.service
 journalctl --user -u spotify-notifier.service -f
+```
+
+Restart after changing credentials, or stop the service:
+
+```bash
 systemctl --user restart spotify-notifier.service
 systemctl --user stop spotify-notifier.service
 ```
 
-To uninstall, stop and disable the service, remove the unit, and reload systemd:
-
-```bash
-systemctl --user disable --now spotify-notifier.service
-rm ~/.config/systemd/user/spotify-notifier.service
-systemctl --user daemon-reload
-```
-
-The installed copy is independent of the checkout. After editing Python settings, copy the updated script to `~/.local/share/suzumushi/suzumushi.py` and restart the service. The virtual environment and installed dependency pins are beside the script.
-
-## Playback and notification behavior
-
-The daemon polls immediately at startup. It compares stable Spotify track IDs, then URIs, then a title/artist/album/duration identity for local music without an ID or URI. It notifies only after a successful `notify-send` submission and remembers the last successfully submitted track across pauses, empty responses, and API errors for the life of the process. A process restart clears that memory and intentionally causes a startup notification for a currently playing song.
-
-When music is playing, the next poll is scheduled for the estimated end of that track. Processing time for artwork and notification is subtracted from the wait, and a one-second minimum prevents a busy loop. There are no intermediate polls during the song. When playback is idle, paused, unsupported, or has no playable item, the daemon waits 120 seconds. Invalid track timing also uses the 120-second fallback. API errors use the retry schedule described below and are not treated as idle playback.
-
-Only playback observed by a poll can be reported. Idle detection can take nearly two minutes. A skip, pause, seek, or device transfer is noticed at the next scheduled poll; a track that begins and ends between polls can be missed. If notification dispatch for A fails, A is retried only if it is still playing at the next scheduled poll. When another track is playing, the daemon handles the current track and does not queue a stale notification for A.
-
-Artwork downloads have a four-second timeout and a 5 MiB cap, are checked for an image signature, and are stored atomically in the private cache. Failed or missing artwork falls back to the Spotify icon. Notification arguments are passed directly to `notify-send` without a shell. A successful command submission does not guarantee that GNOME displays a banner; desktop notification settings may suppress it.
-
-Notifications use `Artist · Album (year)` as the heading and a bold track title in the body, alongside available album artwork. The year comes from the album's release date, with `Unknown year` when unavailable; a reissue's date may differ from the original recording's release year.
-
-Album artwork is sent using the notification `image-path` hint, separately from the Spotify application icon, so desktops supporting both can display the cover beside the track details.
-
-## Configuration constants
-
-Change constants at the top of `suzumushi.py`. Changes take effect after copying the updated file into the install directory and restarting the service. All time constants are seconds unless noted; byte limits and image widths are explicit in their names.
-
-| Constant | Default | Purpose |
-| --- | ---: | --- |
-| `IDLE_POLL_SECONDS` | 120 | Wait after idle, paused, or unsupported playback |
-| `MIN_POLL_SECONDS` | 1 | Minimum active wait |
-| `INVALID_TIMING_POLL_SECONDS` | 120 | Fallback for invalid active track timing |
-| `MALFORMED_RESPONSE_RETRY_SECONDS` | 120 | Retry after malformed successful response |
-| `RETRY_INITIAL_SECONDS` / `RETRY_MULTIPLIER` / `RETRY_MAX_SECONDS` | 5 / 2 / 120 | Exponential transient failure schedule |
-| `RATE_LIMIT_FALLBACK_SECONDS` | 120 | Retry-After fallback for HTTP 429 |
-| `AUTH_REFRESH_ATTEMPTS` | 1 | Refresh attempts after an authorization rejection |
-| `API_TIMEOUT_SECONDS` / `AUTH_TIMEOUT_SECONDS` | 10 / 10 | Spotify API and OAuth request timeouts |
-| `ART_TIMEOUT_SECONDS` / `NOTIFY_TIMEOUT_SECONDS` | 4 / 5 | Artwork and notification timeouts |
-| `SDK_RETRIES` / `SDK_STATUS_RETRIES` | 0 / 0 | Spotipy retries; application loop owns recovery |
-| `ART_MAX_BYTES` / `ART_DOWNLOAD_CHUNK_BYTES` | 5 MiB / 64 KiB | Artwork size bound and read chunk |
-| `ART_PREFERRED_WIDTH_PX` / `ART_CACHE_MAX_ENTRIES` | 300 / 1 | Preferred cover width and cache bound |
-| `NOTIFICATION_APP_NAME` / `NOTIFICATION_ICON` | `Suzumushi` / `spotify` | Notification identity and fallback icon |
-| `NOTIFICATION_HEADER_TEMPLATE` | `{artists} · {album} ({year})` | Notification heading layout |
-| `NOTIFICATION_BODY_TEMPLATE` | `<b>{title}</b>` | Bold track title in the notification body |
-| `UNKNOWN_YEAR` | `Unknown year` | Missing album release year |
-| `UNKNOWN_TITLE` / `UNKNOWN_ARTIST` / `UNKNOWN_ALBUM` | Display fallback text | Missing metadata labels |
-| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / timestamped | Journald logging |
-| `OAUTH_SCOPE` | `user-read-playback-state` | Spotify permission requested |
-| `CLIENT_ID_ENV` / `CLIENT_SECRET_ENV` / `REDIRECT_URI_ENV` | `SPOTIPY_*` names | Credential environment variable names |
-| `DEFAULT_REDIRECT_URI` | `http://127.0.0.1:8888/callback` | Recommended registered redirect value |
-| `CACHE_APP_DIR` / `TOKEN_FILENAME` / `ART_FILENAME` | `suzumushi` / `token.json` / `cover` | Cache paths |
-| `PRIVATE_DIR_MODE` / `PRIVATE_FILE_MODE` | `0700` / `0600` | Cache permissions |
-| `EXIT_CONFIG_ERROR` / `EXIT_AUTH_ERROR` | 2 / 3 | Permanent failure statuses used by systemd |
-
-The service's Python path, `RestartSec`, restart policy, environment, and `UMask` are systemd settings in `systemd/spotify-notifier.service`, not Python constants. Change those values in the unit, copy it to the installed unit location, run `systemctl --user daemon-reload`, and restart the service.
-
-## Failure handling and troubleshooting
-
-- Missing credentials or `notify-send` produce a clear error and a permanent exit status.
-- Missing, unusable, revoked, or persistently rejected authorization exits with instructions to run `--auth`; service mode never launches a browser or requests terminal input.
-- HTTP 401 gets one token refresh attempt; persistent 401 and HTTP 403 stop the service with an authorization error.
-- HTTP 429 waits for the server's `Retry-After` value, or 120 seconds when it is absent or invalid.
-- Network failures and HTTP 5xx use 5, 10, 20, 40, 80, then at most 120 seconds. A successful playback request resets this schedule.
-- Malformed successful responses retry after 120 seconds. Artwork and notification failures are logged and do not discard the last successful notification identity.
-- For missing desktop banners, inspect the service journal, check the session D-Bus and display environment, and review GNOME notification settings.
-
-Run local tests after installing `requirements.txt`; the tests use Python's standard library test runner:
-
-```bash
-python3 -m unittest discover -s tests -v
-```
+To update the installed script after pulling changes, repeat the dependency installation and script copy from step 1, then restart the service.
