@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import email.utils
 import hashlib
 import html
+import json
 import logging
 import os
 import secrets
@@ -38,6 +40,7 @@ API_TIMEOUT_SECONDS = 10
 AUTH_TIMEOUT_SECONDS = 10
 ART_TIMEOUT_SECONDS = 4
 NOTIFY_TIMEOUT_SECONDS = 5
+DBUS_TIMEOUT_SECONDS = 5
 SDK_RETRIES = 0
 SDK_STATUS_RETRIES = 0
 ART_MAX_BYTES = 5 * 1024 * 1024
@@ -67,6 +70,8 @@ DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 CACHE_APP_DIR = "suzumushi"
 TOKEN_FILENAME = "token.json"
 ART_FILENAME = "cover"
+NOTIFICATION_STATE_FILENAME = "notification.json"
+NOTIFICATION_STATE_MAX_BYTES = 4096
 PRIVATE_DIR_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 EXIT_CONFIG_ERROR = 2
@@ -98,6 +103,12 @@ class Playback:
     duration_ms: int | None = None
     progress_ms: int | None = None
     received_at_monotonic: float = 0.0
+
+
+@dataclass
+class NotificationState:
+    server_identity: tuple[str, str, str] | None = None
+    notification_id: int | None = None
 
 
 class ConfigurationError(Exception):
@@ -452,8 +463,86 @@ def resolve_notification_icon() -> str:
     return NOTIFICATION_ICON
 
 
+def notification_server_identity() -> tuple[str, str, str] | None:
+    """Scope numeric notification IDs to the bus and notification server."""
+    # GNOME's notification proxy can outlive Shell, which owns the ID counter.
+    values = []
+    try:
+        for method, arguments in (("GetId", []),
+                                  ("GetNameOwner", ["org.freedesktop.Notifications"]),
+                                  ("GetNameOwner", ["org.gnome.Shell"])):
+            result = subprocess.run(
+                ["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
+                 "--object-path", "/org/freedesktop/DBus", "--method",
+                 f"org.freedesktop.DBus.{method}", *arguments],
+                check=True, timeout=DBUS_TIMEOUT_SECONDS, capture_output=True, text=True,
+            )
+            value = ast.literal_eval(result.stdout.strip())
+            if not isinstance(value, tuple) or len(value) != 1 or not isinstance(value[0], str) or not value[0]:
+                raise ValueError("Invalid D-Bus identity")
+            values.append(value[0])
+        if not all(owner.startswith(":") for owner in values[1:]):
+            raise ValueError("Invalid D-Bus owner")
+    except (subprocess.SubprocessError, OSError, ValueError, SyntaxError, TypeError):
+        LOGGER.warning("Could not identify the notification server; replacement state will not be reused.")
+        return None
+    return values[0], values[1], values[2]
+
+
+def _valid_notification_id(value: Any) -> bool:
+    return type(value) is int and 0 < value <= 0xFFFFFFFF
+
+
+def load_notification_state(config: Config) -> NotificationState:
+    path = config.cache_dir / NOTIFICATION_STATE_FILENAME
+    try:
+        with path.open() as source:
+            contents = source.read(NOTIFICATION_STATE_MAX_BYTES + 1)
+        if len(contents) > NOTIFICATION_STATE_MAX_BYTES:
+            raise ValueError("Notification state is too large")
+        data = json.loads(contents)
+        if (not isinstance(data, dict) or not _valid_notification_id(data.get("notification_id"))
+                or not isinstance(data.get("bus_id"), str) or not data["bus_id"]
+                or not isinstance(data.get("server_owner"), str) or not data["server_owner"].startswith(":")
+                or not isinstance(data.get("shell_owner"), str) or not data["shell_owner"].startswith(":")):
+            raise ValueError("Invalid notification state")
+        return NotificationState((data["bus_id"], data["server_owner"], data["shell_owner"]), data["notification_id"])
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, UnicodeError):
+        LOGGER.warning("Could not load notification replacement state; starting a new entry.")
+    return NotificationState()
+
+
+def save_notification_state(config: Config, state: NotificationState) -> None:
+    path = config.cache_dir / NOTIFICATION_STATE_FILENAME
+    temporary = None
+    try:
+        if state.server_identity is None or state.notification_id is None:
+            path.unlink(missing_ok=True)
+            return
+        config.cache_dir.mkdir(mode=PRIVATE_DIR_MODE, parents=True, exist_ok=True)
+        config.cache_dir.chmod(PRIVATE_DIR_MODE)
+        fd, temporary = tempfile.mkstemp(prefix=".notification-", dir=config.cache_dir)
+        with os.fdopen(fd, "w") as target:
+            os.fchmod(target.fileno(), PRIVATE_FILE_MODE)
+            json.dump({"bus_id": state.server_identity[0], "server_owner": state.server_identity[1],
+                       "shell_owner": state.server_identity[2], "notification_id": state.notification_id}, target)
+        os.replace(temporary, path)
+    except OSError:
+        LOGGER.warning("Could not save notification replacement state; reuse across restarts is unavailable.")
+    finally:
+        if temporary is not None:
+            try:
+                Path(temporary).unlink(missing_ok=True)
+            except OSError:
+                LOGGER.warning("Could not remove temporary notification state.")
+
+
 def dispatch_notification(playback: Playback, config: Config, session: Any,
-                          cache_state: OrderedDict[str, str]) -> None:
+                          cache_state: OrderedDict[str, str],
+                          notification_state: NotificationState | None = None) -> None:
+    state = load_notification_state(config) if notification_state is None else notification_state
     artwork = download_artwork(playback.cover_url, config, session, cache_state)
     # Keep intentional formatting while escaping untrusted Spotify metadata.
     # Quotes are safe in Pango text nodes; apostrophes must remain literal.
@@ -463,14 +552,32 @@ def dispatch_notification(playback: Playback, config: Config, session: Any,
         album=html.escape(playback.album, quote=False),
     )
     safe_body = NOTIFICATION_BODY_TEMPLATE.format(title=html.escape(playback.title, quote=False))
-    command = ["notify-send", "--app-name", NOTIFICATION_APP_NAME, "--icon", resolve_notification_icon()]
+    server_identity = notification_server_identity()
+    command = ["notify-send", "--print-id", "--app-name", NOTIFICATION_APP_NAME, "--icon", resolve_notification_icon()]
+    if server_identity is not None and server_identity == state.server_identity and state.notification_id is not None:
+        command.extend(["--replace-id", str(state.notification_id)])
     if artwork:
         command.extend(["--hint", f"string:image-path:{Path(artwork).resolve().as_uri()}"])
     command.extend([summary, safe_body])
-    subprocess.run(
+    result = subprocess.run(
         command,
         check=True, timeout=NOTIFY_TIMEOUT_SECONDS, capture_output=True, text=True,
     )
+    # Submission succeeded even if the returned ID cannot be reused. Do not
+    # retry the track merely because parsing or saving replacement state fails.
+    try:
+        notification_id = int(result.stdout.strip())
+        if not _valid_notification_id(notification_id):
+            raise ValueError("Invalid notification ID")
+    except (ValueError, TypeError):
+        notification_id = None
+        LOGGER.warning("Notification submitted without a usable ID; the next track will create a new entry.")
+    state.notification_id = notification_id
+    state.server_identity = server_identity
+    if server_identity is None or notification_server_identity() != server_identity:
+        state.server_identity = None
+        state.notification_id = None
+    save_notification_state(config, state)
 
 
 def _retry_after_seconds(headers: Mapping[str, str]) -> float:
@@ -533,6 +640,7 @@ def run_daemon(config: Config, spotify: Any, oauth: Any,
         raise ConfigurationError("Install the dependencies from requirements.txt.") from exc
 
     last_notified_identity: tuple[Any, ...] | None = None
+    notification_state = load_notification_state(config)
     cache_state: OrderedDict[str, str] = OrderedDict()
     clear_stale_artwork(config)
     transient_failures = 0
@@ -580,7 +688,7 @@ def run_daemon(config: Config, spotify: Any, oauth: Any,
         if playback.kind == "music":
             if playback.identity != last_notified_identity:
                 try:
-                    dispatch_notification(playback, config, session, cache_state)
+                    dispatch_notification(playback, config, session, cache_state, notification_state)
                 except (subprocess.SubprocessError, OSError):
                     LOGGER.warning("Notification dispatch failed; this track remains eligible at the next scheduled poll.")
                 else:
@@ -622,6 +730,8 @@ def main(argv: list[str] | None = None) -> int:
         executable = shutil.which("notify-send")
         if not executable:
             raise ConfigurationError("notify-send was not found. Install libnotify-bin (Debian/Ubuntu) or libnotify (Arch).")
+        if not shutil.which("gdbus"):
+            raise ConfigurationError("gdbus was not found. Install libglib2.0-bin (Debian/Ubuntu) or glib2 (Arch).")
         oauth = create_oauth(config)
         validate_cached_authorization(oauth)
         spotify = create_spotify_client(oauth)

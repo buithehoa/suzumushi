@@ -12,15 +12,15 @@ Run the commands below from the repository root in your desktop terminal.
 
 ### 1. Install prerequisites and the script
 
-Requirements: Python 3.10 or newer, Python virtual environment support, `notify-send`, and a Spotify Developer app.
+Requirements: GNOME Shell, Python 3.10 or newer, Python virtual environment support, `notify-send` with `--print-id` and `--replace-id` support, `gdbus`, and a Spotify Developer app.
 
 On Ubuntu/Debian:
 
 ```bash
-sudo apt install python3-venv libnotify-bin
+sudo apt install python3-venv libnotify-bin libglib2.0-bin
 ```
 
-On Arch Linux, install `python` and `libnotify` instead.
+On Arch Linux, install `python`, `libnotify`, and `glib2` instead.
 
 ```bash
 mkdir -p ~/.local/share/suzumushi
@@ -87,6 +87,7 @@ The service starts automatically at login. Run it as your desktop user, without 
 - Waits for the current song's remaining duration before checking again. Skips and pauses are detected at that next check; tracks played entirely between checks can be missed.
 - Waits two minutes when playback is paused or idle, or the content is unsupported. Podcasts and advertisements do not produce notifications.
 - Avoids repeat notifications for the same track during a run. Restarting the service allows a fresh notification for the current track.
+- Replaces its previous notification with the latest observed track, including after service restarts. The latest entry stays in the notification list while paused. Entries accumulated before this feature need one-time manual clearing.
 
 Banner appearance and display duration are controlled by your desktop's notification settings.
 

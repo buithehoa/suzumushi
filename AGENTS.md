@@ -16,6 +16,8 @@ Keep `README.md` focused on installation and how the script runs. Put implementa
 
 `suzumushi.py` is the executable module. Spotipy polls `GET /v1/me/player` across the account's devices; Requests downloads album artwork; `notify-send` submits notifications. `systemd/spotify-notifier.service` manages the process.
 
+`notify-send` must support `--print-id` and `--replace-id`. `gdbus` queries the session bus, notification proxy, and GNOME Shell identities for safe notification replacement across service restarts. GNOME Shell is required.
+
 `requirements.txt` pins Spotipy 2.26.0 and Requests 2.34.2. Install dependencies into the dedicated virtual environment. The runtime copy is installed under `~/.local/share/suzumushi/`, independently of the checkout.
 
 Keep normalization, scheduling, authentication, artwork handling, and notification dispatch in focused functions. Keep configurable values in descriptive module constants at the top of the script, with units in names where applicable.
@@ -48,6 +50,8 @@ Read the year from the album's release date, including year-only and month-preci
 
 Pass `notify-send` arguments as a list with no shell, a checked exit status, and a subprocess timeout. `NOTIFY_TIMEOUT_SECONDS` limits command execution, not banner visibility. Desktop settings and extensions control visible duration. Successful submission does not prove a visible banner.
 
+Capture the ID with `--print-id` and use `--replace-id` for subsequent tracks. Keep replacement state in memory and in `notification.json` under the existing cache directory, using private permissions and atomic writes. Reuse an ID only when the session bus ID, notification service owner, and GNOME Shell owner match. Query the identity again after submission and discard state if it changed. Manually dismissed notifications can receive a new ID; always save the returned ID. Preserve state on failed submissions. Invalid output or cache-write failures must not retry an already submitted track. Pauses retain the latest entry. Existing historical notifications are not removed automatically.
+
 Send artwork through the `image-path` hint using a file URI, separately from the Spotify application icon. Passing album art as `--icon` puts it in the small app-icon slot on GNOME. Resolve the configured application icon to an installed image file across the configured user/system icon directories, including other themes, before passing it as `--icon`. If no file is found, retain the theme-name fallback. An explicit existing icon path takes precedence.
 
 Download artwork only when needed, with finite timeouts, a 5 MiB size cap, image signature validation, private permissions, and atomic cache writes. Keep a bounded cache and reuse matching covers. Failed or missing art uses the application icon without stale artwork from another album.
@@ -67,6 +71,7 @@ Change constants at the top of `suzumushi.py`. Changes take effect after copying
 | `AUTH_REFRESH_ATTEMPTS` | 1 | Refresh attempts after an authorization rejection |
 | `API_TIMEOUT_SECONDS` / `AUTH_TIMEOUT_SECONDS` | 10 / 10 | Spotify API and OAuth request timeouts |
 | `ART_TIMEOUT_SECONDS` / `NOTIFY_TIMEOUT_SECONDS` | 4 / 5 | Artwork and notification timeouts |
+| `DBUS_TIMEOUT_SECONDS` | 5 | Timeout for each notification server identity query |
 | `SDK_RETRIES` / `SDK_STATUS_RETRIES` | 0 / 0 | Spotipy retries; application loop owns recovery |
 | `ART_MAX_BYTES` / `ART_DOWNLOAD_CHUNK_BYTES` | 5 MiB / 64 KiB | Artwork size bound and read chunk |
 | `ART_PREFERRED_WIDTH_PX` / `ART_CACHE_MAX_ENTRIES` | 300 / 1 | Preferred cover width and cache bound |
@@ -81,6 +86,7 @@ Change constants at the top of `suzumushi.py`. Changes take effect after copying
 | `CLIENT_ID_ENV` / `CLIENT_SECRET_ENV` / `REDIRECT_URI_ENV` | `SPOTIPY_*` names | Credential environment variable names |
 | `DEFAULT_REDIRECT_URI` | `http://127.0.0.1:8888/callback` | Recommended registered redirect value |
 | `CACHE_APP_DIR` / `TOKEN_FILENAME` / `ART_FILENAME` | `suzumushi` / `token.json` / `cover` | Cache paths |
+| `NOTIFICATION_STATE_FILENAME` / `NOTIFICATION_STATE_MAX_BYTES` | `notification.json` / 4096 | Persistent notification replacement state and read limit |
 | `PRIVATE_DIR_MODE` / `PRIVATE_FILE_MODE` | `0700` / `0600` | Cache permissions |
 | `EXIT_CONFIG_ERROR` / `EXIT_AUTH_ERROR` | 2 / 3 | Permanent failure statuses used by systemd |
 
