@@ -134,7 +134,10 @@ class SuzumushiTests(unittest.TestCase):
         self.assertEqual(app.choose_delay_seconds(bad_timing), app.INVALID_TIMING_POLL_SECONDS)
 
     def test_notification_passes_literal_metadata_without_a_shell(self):
-        playback = app.normalize_playback(payload(title='"$(touch nope) & <title>'))
+        data = payload(title='Lucifer\'s "$(touch nope) & <title>')
+        data["item"]["artists"][0]["name"] = "Artist's & Co"
+        data["item"]["album"]["name"] = "Album's <Edition>"
+        playback = app.normalize_playback(data)
         with tempfile.TemporaryDirectory() as temp_dir:
             config = app.Config("id", "secret", app.DEFAULT_REDIRECT_URI, Path(temp_dir),
                                 Path(temp_dir) / "token.json", Path(temp_dir) / "cover")
@@ -143,8 +146,8 @@ class SuzumushiTests(unittest.TestCase):
         args, kwargs = run.call_args
         self.assertFalse(kwargs.get("shell", False))
         self.assertEqual(args[0][args[0].index("--app-name") + 1], "Suzumushi")
-        self.assertEqual(args[0][-2], 'Artist · Album (Unknown year)')
-        self.assertEqual(args[0][-1], '<b>&quot;$(touch nope) &amp; &lt;title&gt;</b>')
+        self.assertEqual(args[0][-2], "Artist's &amp; Co · Album's &lt;Edition&gt; (Unknown year)")
+        self.assertEqual(args[0][-1], '<b>Lucifer\'s "$(touch nope) &amp; &lt;title&gt;</b>')
         self.assertTrue(kwargs["check"])
         self.assertEqual(kwargs["timeout"], app.NOTIFY_TIMEOUT_SECONDS)
 

@@ -456,12 +456,13 @@ def dispatch_notification(playback: Playback, config: Config, session: Any,
                           cache_state: OrderedDict[str, str]) -> None:
     artwork = download_artwork(playback.cover_url, config, session, cache_state)
     # Keep intentional formatting while escaping untrusted Spotify metadata.
+    # Quotes are safe in Pango text nodes; apostrophes must remain literal.
     summary = NOTIFICATION_HEADER_TEMPLATE.format(
-        artists=html.escape(playback.artists, quote=True),
-        year=html.escape(playback.release_year, quote=True),
-        album=html.escape(playback.album, quote=True),
+        artists=html.escape(playback.artists, quote=False),
+        year=html.escape(playback.release_year, quote=False),
+        album=html.escape(playback.album, quote=False),
     )
-    safe_body = NOTIFICATION_BODY_TEMPLATE.format(title=html.escape(playback.title, quote=True))
+    safe_body = NOTIFICATION_BODY_TEMPLATE.format(title=html.escape(playback.title, quote=False))
     command = ["notify-send", "--app-name", NOTIFICATION_APP_NAME, "--icon", resolve_notification_icon()]
     if artwork:
         command.extend(["--hint", f"string:image-path:{Path(artwork).resolve().as_uri()}"])
