@@ -34,7 +34,7 @@ Keep normalization, scheduling, authentication, artwork handling, and notificati
 
 ## Playback state and scheduling
 
-Compare stable track IDs, then URIs, then a title/artist/album/duration identity for local music without either. Update the remembered identity only after successful notification submission. Preserve it through pauses, empty responses, and API errors for the process lifetime. A restart clears this state.
+Compare stable track IDs, then URIs, then a title/artist/album/duration identity for local music without either. Update the remembered identity only after successful notification submission. Preserve it through pauses, empty responses, and API errors for the process lifetime. A restart clears this track deduplication state and permits a fresh banner for the current track; the persisted notification ID is reused to replace its existing list entry.
 
 Schedule the next playback request at the estimated song end using a monotonic deadline calculated when the response arrives. Subtract artwork and notification processing time from the wait. Use the one-second minimum to prevent a busy loop at or beyond the deadline. Do not introduce intermediate playback polling or a maximum active wait.
 
@@ -50,7 +50,15 @@ Read the year from the album's release date, including year-only and month-preci
 
 Pass `notify-send` arguments as a list with no shell, a checked exit status, and a subprocess timeout. `NOTIFY_TIMEOUT_SECONDS` limits command execution, not banner visibility. Desktop settings and extensions control visible duration. Successful submission does not prove a visible banner.
 
-Capture the ID with `--print-id` and use `--replace-id` for subsequent tracks. Keep replacement state in memory and in `notification.json` under the existing cache directory, using private permissions and atomic writes. Reuse an ID only when the session bus ID, notification service owner, and GNOME Shell owner match. Query the identity again after submission and discard state if it changed. Manually dismissed notifications can receive a new ID; always save the returned ID. Preserve state on failed submissions. Invalid output or cache-write failures must not retry an already submitted track. Pauses retain the latest entry. Existing historical notifications are not removed automatically.
+### Notification replacement
+
+- Keep one latest-track entry in GNOME's notification list while requesting a banner for each observed track change. Use `notify-send --print-id` on every submission and `--replace-id` when a previous ID is available.
+- Keep replacement state in memory and in `notification.json` under the existing cache directory (`0700` directory, `0600` file, atomic writes). The stored fields are `notification_id`, `bus_id`, `server_owner`, and `shell_owner`.
+- Reuse an ID only when the session bus ID, notification service owner, and GNOME Shell owner match. GNOME's notification proxy and Shell have separate owners; both must be checked. Query the identity again after submission and discard state if it changed.
+- Manually dismissed notifications can receive a new ID; always save the returned ID. Preserve state on failed submissions. Invalid output or cache-write failures must not retry an already submitted track.
+- Pauses retain the latest entry. Existing historical notifications are not removed automatically and need one-time manual clearing.
+
+### Artwork
 
 Send artwork through the `image-path` hint using a file URI, separately from the Spotify application icon. Passing album art as `--icon` puts it in the small app-icon slot on GNOME. Resolve the configured application icon to an installed image file across the configured user/system icon directories, including other themes, before passing it as `--icon`. If no file is found, retain the theme-name fallback. An explicit existing icon path takes precedence.
 
@@ -111,13 +119,16 @@ systemctl --user daemon-reload
 
 ## Failure handling and verification
 
-- Missing credentials or `notify-send` produce a clear error and a permanent exit status.
+- Missing credentials, `notify-send`, or `gdbus` produce a clear error and a permanent exit status.
 - Missing, unusable, revoked, or persistently rejected authorization exits with instructions to run `--auth`; service mode never launches a browser or requests terminal input.
 - HTTP 401 gets one token refresh attempt; persistent 401 and HTTP 403 stop the service with an authorization error.
 - HTTP 429 waits for the server's `Retry-After` value, or 120 seconds when it is absent or invalid.
 - Network failures and HTTP 5xx use 5, 10, 20, 40, 80, then at most 120 seconds. A successful playback request resets this schedule.
 - Malformed successful responses retry after 120 seconds. Artwork and notification failures are logged and do not discard the last successful notification identity.
 - For missing desktop banners, inspect the service journal, check the session D-Bus and display environment, and review GNOME notification settings.
+- For replacement verification, check that the saved notification ID is unchanged after a service restart while its entry still exists. Then observe two different tracks: each should request a banner, and only the latest entry should remain. A successful command or unchanged ID alone does not prove visible banners.
+
+Live verification on 2026-10-16 confirmed ID reuse across a service restart. Two dummy notifications seven seconds apart reused one ID, and the user confirmed both the dummy test and the running service behaved correctly.
 
 Run local tests after installing `requirements.txt`; the tests use Python's standard library test runner:
 
