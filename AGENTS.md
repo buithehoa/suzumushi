@@ -50,6 +50,7 @@ Run `notify-send` with list arguments, no shell, checked exit status, and `NOTIF
 - Keep one latest-track list entry and request a banner per observed track change. Always use `--print-id`; add `--replace-id` when reusable.
 - Store `notification_id`, `bus_id`, `server_owner`, and `shell_owner` in memory and `notification.json` in the cache directory, using `0700`/`0600` permissions and atomic writes.
 - Reuse IDs only when bus ID and both owners match: GNOME's notification proxy and Shell have separate owners. Recheck after submission; discard state if changed.
+- Activate the proxy with `GetServerInformation` before querying owners; `GetNameOwner` alone does not start it. If identity is unavailable before submission, preserve state and defer until the next scheduled poll. If only the post-submission check fails, keep the returned ID with the pre-submission identity; validate it again before reuse. Discard only on a confirmed identity change.
 - Always save the returned ID, which may change after manual dismissal. Failed submissions preserve state; invalid output or cache-write failures must not retry an already submitted track.
 - Pauses retain the latest entry. Clear historical entries from before this feature manually once.
 

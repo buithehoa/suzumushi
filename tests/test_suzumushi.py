@@ -208,7 +208,7 @@ class SuzumushiTests(unittest.TestCase):
             self.assertFalse(list(config.cache_dir.glob(".notification-*")))
 
     def test_notification_does_not_reuse_id_from_another_bus_or_server(self):
-        for identity in (("other-bus", ":1.2", ":1.3"), ("bus", ":1.4", ":1.3"), ("bus", ":1.2", ":1.5"), None):
+        for identity in (("other-bus", ":1.2", ":1.3"), ("bus", ":1.4", ":1.3"), ("bus", ":1.2", ":1.5")):
             with self.subTest(identity=identity), tempfile.TemporaryDirectory() as directory:
                 config = self.notification_config(directory)
                 state = app.NotificationState(("bus", ":1.2", ":1.3"), 42)
@@ -216,7 +216,7 @@ class SuzumushiTests(unittest.TestCase):
                     run.return_value.stdout = "43\n"
                     app.dispatch_notification(app.normalize_playback(payload()), config, object(), OrderedDict(), state)
                     self.assertNotIn("--replace-id", run.call_args.args[0])
-                expected = app.NotificationState(identity, 43) if identity else app.NotificationState()
+                expected = app.NotificationState(identity, 43)
                 self.assertEqual(app.load_notification_state(config), expected)
 
     def test_notification_failure_preserves_previous_replacement_state(self):
@@ -268,11 +268,80 @@ class SuzumushiTests(unittest.TestCase):
             self.assertFalse(list(config.cache_dir.glob(".notification-*")))
 
     def test_notification_server_identity_parses_gdbus_and_handles_failure(self):
-        with patch.object(app.subprocess, "run", side_effect=[subprocess.CompletedProcess([], 0, "('bus',)\n"), subprocess.CompletedProcess([], 0, "(':1.2',)\n"), subprocess.CompletedProcess([], 0, "(':1.3',)\n")]):
+        with patch.object(app.subprocess, "run", side_effect=[subprocess.CompletedProcess([], 0, "('GNOME Shell', 'GNOME', '46', '1.2')\n"), subprocess.CompletedProcess([], 0, "('bus',)\n"), subprocess.CompletedProcess([], 0, "(':1.2',)\n"), subprocess.CompletedProcess([], 0, "(':1.3',)\n")]) as run:
             self.assertEqual(app.notification_server_identity(), ("bus", ":1.2", ":1.3"))
+            first = run.call_args_list[0].args[0]
+            self.assertEqual(first[first.index("--dest") + 1], "org.freedesktop.Notifications")
+            self.assertEqual(first[-1], "org.freedesktop.Notifications.GetServerInformation")
         for output in ("garbage", "('bus', 'extra')", "(42,)"):
             with self.subTest(output=output), patch.object(app.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)):
                 self.assertIsNone(app.notification_server_identity())
+
+    def test_unavailable_server_defers_submission_and_preserves_id_for_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.notification_config(directory)
+            state = app.NotificationState(("bus", ":1.2", ":1.3"), 42)
+            app.save_notification_state(config, state)
+            path = config.cache_dir / app.NOTIFICATION_STATE_FILENAME
+            saved = path.read_bytes()
+            with patch.object(app, "notification_server_identity", return_value=None), patch.object(app.subprocess, "run") as run:
+                with self.assertRaises(OSError):
+                    app.dispatch_notification(app.normalize_playback(payload()), config, object(), OrderedDict(), state)
+                run.assert_not_called()
+            self.assertEqual(path.read_bytes(), saved)
+            self.assertEqual(state, app.load_notification_state(config))
+            with patch.object(app, "notification_server_identity", return_value=state.server_identity), patch.object(app, "download_artwork", return_value=None), patch.object(app, "resolve_notification_icon", return_value="spotify"), patch.object(app.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "42\n")) as run:
+                app.dispatch_notification(app.normalize_playback(payload()), config, object(), OrderedDict(), state)
+                command = run.call_args.args[0]
+                self.assertEqual(command[command.index("--replace-id") + 1], "42")
+
+    def test_failed_post_submission_check_keeps_returned_id_across_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.notification_config(directory)
+            identity = ("bus", ":1.2", ":1.3")
+            with patch.object(app, "notification_server_identity", side_effect=[identity, None]), patch.object(app, "download_artwork", return_value=None), patch.object(app, "resolve_notification_icon", return_value="spotify"), patch.object(app.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "43\n")):
+                app.dispatch_notification(app.normalize_playback(payload()), config, object(), OrderedDict())
+            self.assertEqual(app.load_notification_state(config), app.NotificationState(identity, 43))
+            with patch.object(app, "notification_server_identity", return_value=identity), patch.object(app, "download_artwork", return_value=None), patch.object(app, "resolve_notification_icon", return_value="spotify"), patch.object(app.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "43\n")) as run:
+                app.dispatch_notification(app.normalize_playback(payload("b", "B")), config, object(), OrderedDict())
+                command = run.call_args.args[0]
+                self.assertEqual(command[command.index("--replace-id") + 1], "43")
+
+    def test_notification_server_activation_failure_is_retryable(self):
+        for error in (subprocess.TimeoutExpired("gdbus", 5), subprocess.CalledProcessError(1, "gdbus")):
+            with self.subTest(error=type(error).__name__), patch.object(app.subprocess, "run", side_effect=error) as run:
+                self.assertIsNone(app.notification_server_identity())
+                self.assertEqual(run.call_count, 1)
+
+    def test_cold_proxy_is_activated_before_notification_and_reused_after_restart(self):
+        ready = False
+        sent = []
+
+        def run_command(command, **kwargs):
+            nonlocal ready
+            if command[0] == "notify-send":
+                self.assertTrue(ready)
+                sent.append(command)
+                output = "42\n"
+            elif command[-1].endswith("GetServerInformation"):
+                ready = True
+                output = "('GNOME Shell', 'GNOME', '46', '1.2')"
+            elif command[-1].endswith("GetId"):
+                output = "('bus',)"
+            else:
+                if not ready:
+                    raise subprocess.CalledProcessError(1, command)
+                output = "(':1.2',)" if command[-1] == "org.freedesktop.Notifications" else "(':1.3',)"
+            return subprocess.CompletedProcess(command, 0, output)
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.notification_config(directory)
+            with patch.object(app, "download_artwork", return_value=None), patch.object(app, "resolve_notification_icon", return_value="spotify"), patch.object(app.subprocess, "run", side_effect=run_command):
+                app.dispatch_notification(app.normalize_playback(payload()), config, object(), OrderedDict())
+                app.dispatch_notification(app.normalize_playback(payload("b", "B")), config, object(), OrderedDict())
+            self.assertEqual(len(sent), 2)
+            self.assertNotIn("--replace-id", sent[0])
+            self.assertEqual(sent[1][sent[1].index("--replace-id") + 1], "42")
 
     def test_application_icon_resolves_from_another_installed_theme(self):
         with tempfile.TemporaryDirectory() as temp_dir:

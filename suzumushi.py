@@ -468,6 +468,14 @@ def notification_server_identity() -> tuple[str, str, str] | None:
     # GNOME's notification proxy can outlive Shell, which owns the ID counter.
     values = []
     try:
+        # GetNameOwner does not activate a cold notification proxy. A harmless
+        # server call starts it before we read the identities used for reuse.
+        subprocess.run(
+            ["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+             "--object-path", "/org/freedesktop/Notifications", "--method",
+             "org.freedesktop.Notifications.GetServerInformation"],
+            check=True, timeout=DBUS_TIMEOUT_SECONDS, capture_output=True, text=True,
+        )
         for method, arguments in (("GetId", []),
                                   ("GetNameOwner", ["org.freedesktop.Notifications"]),
                                   ("GetNameOwner", ["org.gnome.Shell"])):
@@ -484,7 +492,7 @@ def notification_server_identity() -> tuple[str, str, str] | None:
         if not all(owner.startswith(":") for owner in values[1:]):
             raise ValueError("Invalid D-Bus owner")
     except (subprocess.SubprocessError, OSError, ValueError, SyntaxError, TypeError):
-        LOGGER.warning("Could not identify the notification server; replacement state will not be reused.")
+        LOGGER.warning("Could not identify the notification server; preserving replacement state.")
         return None
     return values[0], values[1], values[2]
 
@@ -543,6 +551,11 @@ def dispatch_notification(playback: Playback, config: Config, session: Any,
                           cache_state: OrderedDict[str, str],
                           notification_state: NotificationState | None = None) -> None:
     state = load_notification_state(config) if notification_state is None else notification_state
+    server_identity = notification_server_identity()
+    if server_identity is None:
+        # Leave both the previous entry and its saved ID intact. The daemon
+        # retries only if this track is still current at the next scheduled poll.
+        raise OSError("Notification server identity unavailable; submission deferred.")
     artwork = download_artwork(playback.cover_url, config, session, cache_state)
     # Keep intentional formatting while escaping untrusted Spotify metadata.
     # Quotes are safe in Pango text nodes; apostrophes must remain literal.
@@ -552,9 +565,8 @@ def dispatch_notification(playback: Playback, config: Config, session: Any,
         album=html.escape(playback.album, quote=False),
     )
     safe_body = NOTIFICATION_BODY_TEMPLATE.format(title=html.escape(playback.title, quote=False))
-    server_identity = notification_server_identity()
     command = ["notify-send", "--print-id", "--app-name", NOTIFICATION_APP_NAME, "--icon", resolve_notification_icon()]
-    if server_identity is not None and server_identity == state.server_identity and state.notification_id is not None:
+    if server_identity == state.server_identity and state.notification_id is not None:
         command.extend(["--replace-id", str(state.notification_id)])
     if artwork:
         command.extend(["--hint", f"string:image-path:{Path(artwork).resolve().as_uri()}"])
@@ -574,7 +586,8 @@ def dispatch_notification(playback: Playback, config: Config, session: Any,
         LOGGER.warning("Notification submitted without a usable ID; the next track will create a new entry.")
     state.notification_id = notification_id
     state.server_identity = server_identity
-    if server_identity is None or notification_server_identity() != server_identity:
+    confirmed_identity = notification_server_identity()
+    if confirmed_identity is not None and confirmed_identity != server_identity:
         state.server_identity = None
         state.notification_id = None
     save_notification_state(config, state)
