@@ -6,7 +6,7 @@ For Jira, Confluence, GitHub, Databricks, or other connected-service records, di
 
 ## Documentation responsibilities
 
-`README.md` covers installation and runtime behavior; this file covers implementation, configuration, testing, and maintenance. `IMPLEMENTATION_PLAN.md` is historical; the current script defines implemented behavior.
+`README.md` covers installation and runtime behavior; this file covers implementation, configuration, testing, and maintenance. The current script defines implemented behavior.
 
 ## Architecture and dependencies
 
