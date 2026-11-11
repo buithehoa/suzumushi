@@ -39,7 +39,7 @@ Notify only observed tracks. After dispatch failure, retry only if that track is
 
 ## Notification rendering and artwork
 
-Use label `Suzumushi`, heading `Artist · Album (year)`, and body `<b>Track</b>`, with layouts in constants. Escape metadata before inserting intentional markup. GNOME controls native heading weight; bold markup belongs in the body.
+Use label `Suzumushi`, heading `Artist · Album (year)`, and body `<b>Track</b>`, with layouts in constants. Escape metadata before inserting it into body markup; never escape the heading, which is plain text per the notification spec, so entities like `&amp;` would display literally. GNOME controls native heading weight; bold markup belongs in the body.
 
 Read the album release year, accepting year-only and month-precision dates; use `Unknown year` when unusable or absent. Reissues may differ from the original recording's year.
 

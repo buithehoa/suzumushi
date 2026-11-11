@@ -149,7 +149,7 @@ class SuzumushiTests(unittest.TestCase):
         args, kwargs = run.call_args
         self.assertFalse(kwargs.get("shell", False))
         self.assertEqual(args[0][args[0].index("--app-name") + 1], "Suzumushi")
-        self.assertEqual(args[0][-2], "Artist's &amp; Co · Album's &lt;Edition&gt; (Unknown year)")
+        self.assertEqual(args[0][-2], "Artist's & Co · Album's <Edition> (Unknown year)")
         self.assertEqual(args[0][-1], '<b>Lucifer\'s "$(touch nope) &amp; &lt;title&gt;</b>')
         self.assertTrue(kwargs["check"])
         self.assertEqual(kwargs["timeout"], app.NOTIFY_TIMEOUT_SECONDS)

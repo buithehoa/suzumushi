@@ -557,12 +557,14 @@ def dispatch_notification(playback: Playback, config: Config, session: Any,
         # retries only if this track is still current at the next scheduled poll.
         raise OSError("Notification server identity unavailable; submission deferred.")
     artwork = download_artwork(playback.cover_url, config, session, cache_state)
-    # Keep intentional formatting while escaping untrusted Spotify metadata.
-    # Quotes are safe in Pango text nodes; apostrophes must remain literal.
+    # The summary is plain text per the notification spec, so GNOME shows
+    # entities literally; only the body is parsed as markup. Escape untrusted
+    # Spotify metadata in the body only. Quotes are safe in Pango text nodes;
+    # apostrophes must remain literal.
     summary = NOTIFICATION_HEADER_TEMPLATE.format(
-        artists=html.escape(playback.artists, quote=False),
-        year=html.escape(playback.release_year, quote=False),
-        album=html.escape(playback.album, quote=False),
+        artists=playback.artists,
+        year=playback.release_year,
+        album=playback.album,
     )
     safe_body = NOTIFICATION_BODY_TEMPLATE.format(title=html.escape(playback.title, quote=False))
     command = ["notify-send", "--print-id", "--app-name", NOTIFICATION_APP_NAME, "--icon", resolve_notification_icon()]
