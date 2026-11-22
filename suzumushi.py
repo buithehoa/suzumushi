@@ -255,11 +255,30 @@ def run_authentication(config: Config) -> None:
     print("Spotify authorization saved to the private application cache.")
 
 
+def _is_transient_token_refresh_failure(exc: BaseException) -> bool:
+    import requests
+    if isinstance(exc, requests.exceptions.Timeout | requests.exceptions.ConnectionError):
+        return True
+    # Spotipy re-raises token endpoint HTTP errors as SpotifyOauthError, chaining the original HTTPError.
+    http_error = exc.__context__
+    status = getattr(getattr(http_error, "response", None), "status_code", None)
+    return (isinstance(http_error, requests.exceptions.HTTPError) and isinstance(status, int)
+            and (status == 429 or status >= 500))
+
+
 def validate_cached_authorization(oauth: Any) -> None:
     try:
-        token = oauth.validate_token(oauth.cache_handler.get_cached_token())
+        cached_token = oauth.cache_handler.get_cached_token()
     except Exception as exc:
         raise AuthenticationError("Could not read the Spotify token cache. Run --auth again.") from exc
+    try:
+        token = oauth.validate_token(cached_token)
+    except Exception as exc:
+        if not _is_transient_token_refresh_failure(exc):
+            raise AuthenticationError("Spotify rejected the cached authorization. Run --auth again.") from exc
+        # Typically the network is not up yet at login; the playback loop retries the refresh with backoff.
+        LOGGER.warning("Could not reach Spotify to refresh the cached token; retrying from the playback loop.")
+        token = cached_token
     if not isinstance(token, dict) or not token.get("access_token"):
         raise AuthenticationError("No usable Spotify authorization is cached. Run --auth first.")
     if token.get("scope") and OAUTH_SCOPE not in str(token["scope"]).split():

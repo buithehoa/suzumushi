@@ -115,6 +115,7 @@ systemctl --user daemon-reload
 
 - Missing credentials, `notify-send`, or `gdbus`: clear error and permanent exit status.
 - Missing, unusable, revoked, or persistently rejected authorization: exit with `--auth` instructions. HTTP 401 gets one refresh attempt; persistent 401 and HTTP 403 stop the service with an authorization error.
+- Startup token refresh: network failures, timeouts, HTTP 429, and HTTP 5xx are transient, since the service usually starts before the network is up. Log a warning and let the playback loop retry with the transient backoff; only token endpoint rejections exit with the authorization status.
 - HTTP 429: server `Retry-After`, falling back to 120 seconds if absent/invalid.
 - Network failures/HTTP 5xx: 5, 10, 20, 40, 80, then at most 120 seconds; successful playback requests reset backoff.
 - Malformed successful responses: retry after 120 seconds. Log artwork/notification failures and retain the last successful track identity.

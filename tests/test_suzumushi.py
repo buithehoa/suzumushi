@@ -439,5 +439,96 @@ class SuzumushiTests(unittest.TestCase):
             self.assertEqual(oauth.asserted_refresh_token, "refresh")
 
 
+def http_response(status, body):
+    import requests
+
+    response = requests.Response()
+    response.status_code = status
+    response._content = json.dumps(body).encode()
+    response.headers["Content-Type"] = "application/json"
+    response.url = "https://test.invalid/"
+    return response
+
+
+class StartupTokenRefreshTests(unittest.TestCase):
+    """Run main() with real Spotipy objects, faking only the HTTP transport."""
+
+    TOKEN_URL = "https://accounts.spotify.com/api/token"
+
+    def run_main(self, token_results, playback_results, stop):
+        """token_results/playback_results: exceptions to raise or responses to return, in order."""
+        import requests
+
+        token_results, playback_results = iter(token_results), iter(playback_results)
+        token_requests = []
+
+        def fake_request(session, method, url, **kwargs):
+            results = token_results if url == self.TOKEN_URL else playback_results
+            if url == self.TOKEN_URL:
+                token_requests.append(url)
+            result = next(results)
+            if isinstance(result, BaseException):
+                raise result
+            return result
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {app.CLIENT_ID_ENV: "client", app.CLIENT_SECRET_ENV: "secret",
+                   app.REDIRECT_URI_ENV: app.DEFAULT_REDIRECT_URI, "XDG_CACHE_HOME": temp_dir}
+            token_path = Path(temp_dir) / app.CACHE_APP_DIR / app.TOKEN_FILENAME
+            token_path.parent.mkdir(mode=app.PRIVATE_DIR_MODE)
+            token_path.write_text(json.dumps({
+                "access_token": "expired", "token_type": "Bearer", "expires_in": 3600,
+                "expires_at": 1, "refresh_token": "refresh", "scope": app.OAUTH_SCOPE,
+            }))
+            old_umask = app.os.umask(0o022)
+            app.os.umask(old_umask)
+            try:
+                with patch.dict(app.os.environ, env), \
+                        patch.object(app.shutil, "which", return_value="/usr/bin/tool"), \
+                        patch.object(app.signal, "signal"), \
+                        patch.object(app.logging, "basicConfig"), \
+                        patch.object(app, "_STOP_EVENT", stop), \
+                        patch.object(app, "dispatch_notification") as dispatch, \
+                        patch.object(requests.Session, "request", fake_request):
+                    status = app.main([])
+            finally:
+                app.os.umask(old_umask)
+        return status, token_requests, dispatch
+
+    def test_network_failure_at_startup_retries_token_refresh_with_backoff(self):
+        import requests
+
+        token_ok = http_response(200, {"access_token": "fresh", "token_type": "Bearer",
+                                       "expires_in": 3600, "scope": app.OAUTH_SCOPE})
+        startup_failures = {
+            "connection": requests.exceptions.ConnectionError("network is unreachable"),
+            "timeout": requests.exceptions.ReadTimeout("timed out"),
+            "server error": http_response(503, {"error": "temporarily_unavailable"}),
+            "rate limited": http_response(429, {"error": "rate_limited"}),
+        }
+        for name, failure in startup_failures.items():
+            with self.subTest(name), self.assertLogs("suzumushi", "INFO") as logs:
+                stop = StopAfterWaits(2)
+                # Startup refresh fails, the first poll's refresh fails again, then the network is back.
+                status, token_requests, dispatch = self.run_main(
+                    [failure, failure, token_ok], [http_response(200, payload())], stop)
+
+                self.assertEqual(status, 0)
+                self.assertEqual(len(token_requests), 3)
+                self.assertEqual(stop.waits[0], app.RETRY_INITIAL_SECONDS)
+                self.assertEqual(dispatch.call_count, 1)
+                self.assertTrue(any("retry 1 in 5.0 seconds" in line for line in logs.output))
+
+    def test_rejected_refresh_token_at_startup_still_requires_reauthorization(self):
+        stop = StopAfterWaits(1)
+        revoked = http_response(400, {"error": "invalid_grant", "error_description": "Refresh token revoked"})
+        status, token_requests, dispatch = self.run_main([revoked], [], stop)
+
+        self.assertEqual(status, app.EXIT_AUTH_ERROR)
+        self.assertEqual(len(token_requests), 1)
+        self.assertEqual(stop.waits, [])
+        dispatch.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
