@@ -529,6 +529,22 @@ class StartupTokenRefreshTests(unittest.TestCase):
         self.assertEqual(stop.waits, [])
         dispatch.assert_not_called()
 
+    def test_refresh_token_rejected_by_playback_loop_requires_reauthorization(self):
+        import requests
+
+        # The network is down at startup; once it is back, Spotify rejects the refresh token.
+        stop = StopAfterWaits(3)
+        revoked = http_response(400, {"error": "invalid_grant", "error_description": "Refresh token revoked"})
+        with self.assertLogs("suzumushi", "INFO") as logs:
+            status, token_requests, dispatch = self.run_main(
+                [requests.exceptions.ConnectionError("network is unreachable"), revoked], [], stop)
+
+        self.assertEqual(status, app.EXIT_AUTH_ERROR)
+        self.assertEqual(len(token_requests), 2)
+        self.assertEqual(stop.waits, [])
+        dispatch.assert_not_called()
+        self.assertTrue(any("--auth" in line for line in logs.output))
+
 
 if __name__ == "__main__":
     unittest.main()

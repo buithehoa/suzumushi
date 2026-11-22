@@ -266,6 +266,14 @@ def _is_transient_token_refresh_failure(exc: BaseException) -> bool:
             and (status == 429 or status >= 500))
 
 
+def _is_token_refresh_rejection(exc: BaseException) -> bool:
+    try:
+        from spotipy.oauth2 import SpotifyOauthError
+    except ImportError:
+        return False
+    return isinstance(exc, SpotifyOauthError) and not _is_transient_token_refresh_failure(exc)
+
+
 def validate_cached_authorization(oauth: Any) -> None:
     try:
         cached_token = oauth.cache_handler.get_cached_token()
@@ -696,6 +704,8 @@ def run_daemon(config: Config, spotify: Any, oauth: Any,
                 break
             continue
         except Exception as exc:
+            if _is_token_refresh_rejection(exc):
+                raise AuthRejected from exc
             status, headers = _api_exception_status(exc)
             if status == 401:
                 auth_rejections += 1
